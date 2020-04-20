@@ -10,6 +10,10 @@ class CPU:
         self.ram = [0] * 256
         self.reg = [0] * 8
         self.pc = 0
+        self.inst_branchtable = {
+            'LDI': self.ldi,
+            'PRN': self.prn
+        }
 
     def ram_read(self, mar):
         """Returns value stored in the given RAM address"""
@@ -123,26 +127,39 @@ class CPU:
 
         return dictionary[bite]
 
+    def ldi(self, reg_loc, value):
+        self.reg[reg_loc] = value
+
+    def prn(self, reg_loc):
+        print(self.reg[reg_loc])
+
     def run(self):
         """Run the CPU."""
         running = True
         while running:
             ir = self.ram_read(self.pc)
             inst = self.decode(ir)
-            operand_a = self.ram_read(self.pc+1)
-            operand_b = self.ram_read(self.pc+2)
 
             # This helped to learn how to isolate values in a bit:
             # https://stackoverflow.com/a/45221136/12685847
+            num_ops = ir >> 6 & 0b11 # Isolate the first two values
+            if num_ops > 0:
+                operand_a = self.ram_read(self.pc+1)
+            if num_ops == 2:
+                operand_b = self.ram_read(self.pc+2)
+
             is_alu = ir >> 5 & 1 # Isolate the 3rd value
             if inst == 'HLT':
                 running = False
             elif is_alu:
                 self.alu(inst, operand_a, operand_b)
-            elif inst == 'LDI':
-                self.reg[operand_a] = operand_b
-            elif inst == 'PRN':
-                print(self.reg[operand_a])
+            else:
+                func = self.inst_branchtable[inst]
+                if num_ops == 0:
+                    func()
+                elif num_ops == 1:
+                    func(operand_a)
+                else:
+                    func(operand_a, operand_b)
 
-            num_ops = ir >> 6 & 0b11 # Isolate the first two values
             self.pc += num_ops+1
