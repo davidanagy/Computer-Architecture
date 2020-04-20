@@ -20,33 +20,44 @@ class CPU:
         """Writes a value into RAM at the given address"""
         self.ram[mar] = mdr
 
-    def load(self):
-        """Load a program into memory."""
+    def load(self, filename):
+        """Opens file, reads it line by line, and loads them into memory."""
 
         address = 0
 
         # For now, we've just hardcoded a program:
 
-        program = [
-            # From print8.ls8
-            0b10000010, # LDI R0,8
-            0b00000000,
-            0b00001000,
-            0b01000111, # PRN R0
-            0b00000000,
-            0b00000001, # HLT
-        ]
-
-        for instruction in program:
-            self.ram_write(instruction, address)
-            address += 1
-
+        # program = [
+        #     # From print8.ls8
+        #     0b10000010, # LDI R0,8
+        #     0b00000000,
+        #     0b00001000,
+        #     0b01000111, # PRN R0
+        #     0b00000000,
+        #     0b00000001, # HLT
+        # ]
+        with open(filename) as f:
+            program = f.readlines()
+        for line in program:
+            if '#' in line:
+                instruction = line.split('#')[0]
+            else:
+                instruction = line.split('\n')[0]
+            if len(instruction) == 0:
+                continue
+            else:
+                #print(f'writing {instruction}')
+                instruction = int(instruction, 2)
+                self.ram_write(instruction, address)
+                address += 1
 
     def alu(self, op, reg_a, reg_b):
         """ALU operations."""
 
         if op == "ADD":
             self.reg[reg_a] += self.reg[reg_b]
+        elif op == 'MUL':
+            self.reg[reg_a] *= self.reg[reg_b]
         #elif op == "SUB": etc
         else:
             raise Exception("Unsupported ALU operation")
@@ -121,12 +132,17 @@ class CPU:
             operand_a = self.ram_read(self.pc+1)
             operand_b = self.ram_read(self.pc+2)
 
+            # This helped to learn how to isolate values in a bit:
+            # https://stackoverflow.com/a/45221136/12685847
+            is_alu = ir >> 5 & 1 # Isolate the 3rd value
             if inst == 'HLT':
                 running = False
+            elif is_alu:
+                self.alu(inst, operand_a, operand_b)
             elif inst == 'LDI':
                 self.reg[operand_a] = operand_b
             elif inst == 'PRN':
                 print(self.reg[operand_a])
 
-            num_ops = ir >> 6 # Shift IR byte 6 to the right to isolate the first two bits
+            num_ops = ir >> 6 & 0b11 # Isolate the first two values
             self.pc += num_ops+1
