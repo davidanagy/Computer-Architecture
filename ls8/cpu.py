@@ -9,10 +9,13 @@ class CPU:
         """Construct a new CPU."""
         self.ram = [0] * 256
         self.reg = [0] * 8
+        self.reg[7] = 0xf4
         self.pc = 0
         self.inst_branchtable = {
             'LDI': self.ldi,
-            'PRN': self.prn
+            'POP': self.pop,
+            'PRN': self.prn,
+            'PUSH': self.push
         }
 
     def ram_read(self, mar):
@@ -130,8 +133,18 @@ class CPU:
     def ldi(self, reg_loc, value):
         self.reg[reg_loc] = value
 
+    def pop(self, reg_loc):
+        sp = self.reg[7]
+        self.reg[reg_loc] = self.ram[sp]
+        self.reg[7] += 1
+
     def prn(self, reg_loc):
         print(self.reg[reg_loc])
+
+    def push(self, reg_loc):
+        self.reg[7] -= 1
+        sp = self.reg[7]
+        self.ram[sp] = self.reg[reg_loc]
 
     def run(self):
         """Run the CPU."""
