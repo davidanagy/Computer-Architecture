@@ -12,10 +12,12 @@ class CPU:
         self.reg[7] = 0xf4
         self.pc = 0
         self.inst_branchtable = {
+            'CALL': self.call,
             'LDI': self.ldi,
             'POP': self.pop,
             'PRN': self.prn,
-            'PUSH': self.push
+            'PUSH': self.push,
+            'RET': self.ret
         }
 
     def ram_read(self, mar):
@@ -63,6 +65,14 @@ class CPU:
 
         if op == "ADD":
             self.reg[reg_a] += self.reg[reg_b]
+        elif op == 'AND':
+            self.reg[reg_a] = bin(self.reg[reg_a]) & bin(self.reg[reg_b])
+        elif op == 'DEC':
+            self.reg[reg_a] -= 1
+        elif op == 'DIV':
+            self.reg[reg_a] = self.reg[reg_a] / self.reg[reg_b]
+        elif op == 'INC':
+            self.reg[reg_a] += 1
         elif op == 'MUL':
             self.reg[reg_a] *= self.reg[reg_b]
         #elif op == "SUB": etc
@@ -130,6 +140,18 @@ class CPU:
 
         return dictionary[bite]
 
+    def call(self, reg_loc):
+        # Save current value of reg[4] to reserved place in RAM
+        self.ram_write(self.reg[4], 0xf5)
+        # Change reg[4] to address of next instruction
+        self.ldi(4, self.pc+2)
+        # Push addres of next instruction to stack
+        self.push(4)
+        # Return reg[4] to its original value
+        self.ldi(4, self.ram_read(0xf5))
+        # Set PC to address in given register
+        self.pc = self.reg[reg_loc]
+
     def ldi(self, reg_loc, value):
         self.reg[reg_loc] = value
 
@@ -146,26 +168,37 @@ class CPU:
         sp = self.reg[7]
         self.ram[sp] = self.reg[reg_loc]
 
+    def ret(self):
+        # Save current value of reg[4] to reserved place in RAM
+        self.ram_write(self.reg[4], 0xf6)
+        # Pop value from top of stack
+        self.pop(4)
+        # Set that value as the PC
+        self.pc = self.reg[4]
+        # Return reg[4] to its previous state
+        self.reg[4] = self.ram_read(0xf6)
+
     def run(self):
         """Run the CPU."""
         running = True
         while running:
             ir = self.ram_read(self.pc)
             inst = self.decode(ir)
+            operand_a = self.ram_read(self.pc+1)
+            operand_b = self.ram_read(self.pc+2)
 
             # This helped to learn how to isolate values in a bit:
             # https://stackoverflow.com/a/45221136/12685847
             num_ops = ir >> 6 & 0b11 # Isolate the first two values
-            if num_ops > 0:
-                operand_a = self.ram_read(self.pc+1)
-            if num_ops == 2:
-                operand_b = self.ram_read(self.pc+2)
-
             is_alu = ir >> 5 & 1 # Isolate the 3rd value
+            inst_sets_pc = ir >> 4 & 1 # Isolate the 4th value
+            next_inst_loc = self.pc + num_ops+1
             if inst == 'HLT':
                 running = False
+                self.pc = next_inst_loc
             elif is_alu:
                 self.alu(inst, operand_a, operand_b)
+                self.pc = next_inst_loc
             else:
                 func = self.inst_branchtable[inst]
                 if num_ops == 0:
@@ -175,4 +208,5 @@ class CPU:
                 else:
                     func(operand_a, operand_b)
 
-            self.pc += num_ops+1
+            if not inst_sets_pc:
+                self.pc = next_inst_loc
