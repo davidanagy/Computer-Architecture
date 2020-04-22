@@ -35,7 +35,7 @@ class CPU:
             0b10100011: 'DIV',
             0b00000001: 'HLT',
             0b01100101: 'INC',
-            0b01010010: 'INT',
+            0b01010010: 'INT_',
             0b00010011: 'IRET',
             0b01010101: 'JEQ',
             0b01011010: 'JGE',
@@ -58,7 +58,7 @@ class CPU:
             0b00010001: 'RET',
             0b10101100: 'SHL',
             0b10101101: 'SHR',
-            0b10000101: 'ST',
+            0b10000100: 'ST',
             0b10100001: 'SUB',
             0b10101011: 'XOR'
         }
@@ -192,8 +192,9 @@ class CPU:
     def _check_elapsed_time(self):
         for i in range(3):
             self.push(i)
+        self.ram_write(self.fl, 0xf6)
         self.ldi(0, 0xf7)
-        self.ldi(1, datetime.now())
+        self.ldi(1, datetime.now().second)
         self.ld(2, 0)
         self.alu('INC', 2, None)
         self.alu('CMP', 1, 2)
@@ -202,7 +203,8 @@ class CPU:
             self.ldi(3, 0b00000001)
             self.alu('OR', 6, 3)
             self.pop(3)
-            self.st(1, 0)
+            self.st(0, 1)
+        self.fl = self.ram_read(0xf6)
         for i in reversed(range(3)):
             self.pop(i)
         
@@ -214,7 +216,7 @@ class CPU:
                 # 1. Disable further interrupts (this will be done later)
                 # 2. Clear the bit in the IS register
                 is_bit_mask = ''
-                for _ in range(i):
+                for _ in range(abs(7-i)):
                     is_bit_mask += '1'
                 is_bit_mask += '0'
                 while len(is_bit_mask) < 8:
@@ -236,10 +238,12 @@ class CPU:
                     self.push(j)
                 # 6. Look up vector of the appropriate handler
                 vector_address = 0xf8+i
-                # 7. Set the PC to the vector address
-                self.pc = vector_address
+                # 7. Set the PC to (the value stored in the) the vector address
+                self.pc = self.ram_read(vector_address)
                 # (Disable further interrupts)
                 self.ldi(5, 0)
+                # Break loop
+                break
 
     def call(self, register):
         # Save current value of reg[4] to reserved place in RAM
@@ -252,26 +256,61 @@ class CPU:
         self.ldi(4, self.ram_read(0xf5))
         # Set PC to address in given register
         self.pc = self.reg[register]
+        # 4. Interrupt are re-enabled (this happens automatically
+        # since R5 was popped off the stack)
+
+    def int_(self, register):
+        """Issue the interrupt number stored in the given register"""
+        # Set the nth bit in the IS register to the value in the given register
+        self.alu('OR', 6, register)
+
+    def iret(self):
+        """Return from an interrupt handler"""
+        # 1. Registers R6-R0 are popped off the stack in that order
+        for i in reversed(range(7)):
+            self.pop(i)
+        # 2. The FL register is popped off the stack
+        # Save current value of reg[0] to reserved space in memory
+        self.ram_write(self.reg[0], 0xf5)
+        self.pop(0)
+        self.fl = self.reg[0]
+        # 3. The return address is popped off the stack and stored in PC
+        self.pop(0)
+        self.pc = self.reg[0]
+        # Return original value of R0
+        self.ldi(0, self.ram_read(0xf5))
+        # 4. Interrupts are re-enabled (this happens automatically
+        # since R5 was popped)
 
     def jeq(self, register):
         if self._judge(mask=0b00000001):
             self.jmp(register)
+        else:
+            self.pc += 2
 
     def jge(self, register):
         if self._judge(mask=0b00000011):
             self.jmp(register)
+        else:
+            self.pc += 2
 
     def jgt(self, register):
         if self._judge(mask=0b00000010, shift=True, shift_amount=1):
             self.jmp(register)
+        else:
+            self.pc += 2
 
     def jle(self, register):
         if self._judge(mask=0b00000101):
             self.jmp(register)
+        else:
+            self.pc += 2
 
     def jlt(self, register):
         if self._judge(mask=0b00000100, shift=True, shift_amount=2):
             self.jmp(register)
+        else:
+            self.pc += 2
 
     def jmp(self, register):
         self.pc = self.reg[register]
@@ -279,6 +318,8 @@ class CPU:
     def jne(self, register):
         if not self._judge(mask=0b00000001):
             self.jmp(register)
+        else:
+            self.pc += 2
 
     def ld(self, reg_a, reg_b):
         mar = self.reg[reg_b]
@@ -294,7 +335,7 @@ class CPU:
     def pop(self, register):
         sp = self.reg[7]
         self.reg[register] = self.ram[sp]
-        self.reg[7] += 1
+        self.alu('INC', 7, None)
 
     def pra(self, register):
         print(chr(self.reg[register]))
@@ -303,7 +344,7 @@ class CPU:
         print(self.reg[register])
 
     def push(self, register):
-        self.reg[7] -= 1
+        self.alu('DEC', 7, None)
         sp = self.reg[7]
         self.ram[sp] = self.reg[register]
 
@@ -318,19 +359,19 @@ class CPU:
         self.reg[4] = self.ram_read(0xf5)
 
     def st(self, reg_a, reg_b):
-        mdr = self.reg[reg_a]
-        mar = self.reg[reg_b]
+        mar = self.reg[reg_a]
+        mdr = self.reg[reg_b]
         self.ram_write(mdr, mar)
 
     def run(self):
         """Run the CPU."""
-        self.ldi(0, datetime.now())
+        self.ldi(0, datetime.now().second)
         self.ldi(1, 0xf7)
-        self.st(0, 1)
+        self.st(1, 0)
         while True:
             self._check_elapsed_time()
             if self.reg[6] == 1:
-                self._handle_interrupts()
+               self._handle_interrupts()
             ir = self.ram_read(self.pc)
             inst = self._decode(ir)
             operand_a = self.ram_read(self.pc+1)
