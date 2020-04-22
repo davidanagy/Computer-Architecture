@@ -1,6 +1,7 @@
 """CPU functionality."""
 
 from datetime import datetime
+import msvcrt
 import sys
 
 
@@ -245,6 +246,15 @@ class CPU:
                 # Break loop
                 break
 
+    def _check_key_press(self):
+        if msvcrt.kbhit():
+            self.ram_write(ord(msvcrt.getch()), 0xf4)
+            self.push(0)
+            self.ldi(0, 0b00000010)
+            self.alu('OR', 6, 0)
+            self.pop(0)
+            self._handle_interrupts()
+
     def call(self, register):
         # Save current value of reg[4] to reserved place in RAM
         self.ram_write(self.reg[4], 0xf5)
@@ -369,6 +379,7 @@ class CPU:
         self.ldi(1, 0xf7)
         self.st(1, 0)
         while True:
+            self._check_key_press()
             self._check_elapsed_time()
             if self.reg[6] == 1:
                self._handle_interrupts()
