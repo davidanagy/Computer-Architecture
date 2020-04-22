@@ -205,6 +205,41 @@ class CPU:
             self.st(1, 0)
         for i in reversed(range(3)):
             self.pop(i)
+        
+    def _handle_interrupts(self):
+        maskedInterrupts = self.reg[5] & self.reg[6]
+        for i in range(8):
+            # Right shift interrupts by i, then mask with 1
+            if ((maskedInterrupts >> i) & 1) == 1:
+                # 1. Disable further interrupts (this will be done later)
+                # 2. Clear the bit in the IS register
+                is_bit_mask = ''
+                for _ in range(i):
+                    is_bit_mask += '1'
+                is_bit_mask += '0'
+                while len(is_bit_mask) < 8:
+                    is_bit_mask += '1'
+                # Save reg[0] to reserved place in memory
+                self.ram_write(self.reg[0], 0xf5)
+                self.ldi(0, int(is_bit_mask, 2))
+                self.alu('AND', 6, 0)
+                # 3. Push PC register onto the stack
+                self.ldi(0, self.pc)
+                self.push(0)
+                # 4. Push FL register onto the stack
+                self.ldi(0, self.fl)
+                self.push(0)
+                # 5. Push registers R0-R6 onto the stack in that order.
+                # Bring back original value of reg[0]
+                self.reg[0] = self.ram_read(0xf5)
+                for j in range(7):
+                    self.push(j)
+                # 6. Look up vector of the appropriate handler
+                vector_address = 0xf8+i
+                # 7. Set the PC to the vector address
+                self.pc = vector_address
+                # (Disable further interrupts)
+                self.ldi(5, 0)
 
     def call(self, register):
         # Save current value of reg[4] to reserved place in RAM
@@ -295,39 +330,7 @@ class CPU:
         while True:
             self._check_elapsed_time()
             if self.reg[6] == 1:
-                maskedInterrupts = self.reg[5] & self.reg[6]
-                for i in range(8):
-                    # Right shift interrupts by i, then mask with 1
-                    if ((maskedInterrupts >> i) & 1) == 1:
-                        # 1. Disable further interrupts (this will be done later)
-                        # 2. Clear the bit in the IS register
-                        is_bit_mask = ''
-                        for _ in range(i):
-                            is_bit_mask += '1'
-                        is_bit_mask += '0'
-                        while len(is_bit_mask) < 8:
-                            is_bit_mask += '1'
-                        # Save reg[0] to reserved place in memory
-                        self.ram_write(self.reg[0], 0xf5)
-                        self.ldi(0, int(is_bit_mask, 2))
-                        self.alu('AND', 6, 0)
-                        # 3. Push PC register onto the stack
-                        self.ldi(0, self.pc)
-                        self.push(0)
-                        # 4. Push FL register onto the stack
-                        self.ldi(0, self.fl)
-                        self.push(0)
-                        # 5. Push registers R0-R6 onto the stack in that order.
-                        # Bring back original value of reg[0]
-                        self.reg[0] = self.ram_read(0xf5)
-                        for j in range(7):
-                            self.push(j)
-                        # 6. Look up vector of the appropriate handler
-                        vector_address = 0xf8+i
-                        # 7. Set the PC to the vector address
-                        self.pc = vector_address
-                        # (Disable further interrupts)
-                        self.ldi(5, 0)
+                self._handle_interrupts()
             ir = self.ram_read(self.pc)
             inst = self._decode(ir)
             operand_a = self.ram_read(self.pc+1)
