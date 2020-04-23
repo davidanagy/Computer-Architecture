@@ -348,7 +348,7 @@ class CPU:
         self.alu('INC', 7, None)
 
     def pra(self, register):
-        print(chr(self.reg[register]))
+        print(chr(self.reg[register]), end='', flush=True)
 
     def prn(self, register):
         print(self.reg[register])
