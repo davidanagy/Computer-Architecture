@@ -10,25 +10,17 @@ class CPU:
 
     def __init__(self):
         """Construct a new CPU."""
+        # Initialize RAM and Register
         self.ram = [0] * 256
         self.reg = [0] * 8
+        # Set original stack pointer
         self.reg[7] = 0xf4
         self.pc = 0
-        # self.inst_branchtable = {
-        #     'CALL': self.call,
-        #     'LD': self.ld,
-        #     'LDI': self.ldi,
-        #     'JMP': self.jmp,
-        #     'NOP': self.nop,
-        #     'POP': self.pop,
-        #     'PRA': self.pra,
-        #     'PRN': self.prn,
-        #     'PUSH': self.push,
-        #     'RET': self.ret,
-        #     'ST': self.st
-        # }
+        # This dictionary is not strictly necessary
+        # but it's helpful to comprehend what's going on.
         self.dictionary = {
             0b10100000: 'ADD',
+            0b10000101: 'ADDI',
             0b10101000: 'AND',
             0b01010000: 'CALL',
             0b10100111: 'CMP',
@@ -114,12 +106,15 @@ class CPU:
             self.reg[reg_a] = self.reg[reg_a] & self.reg[reg_b]
         elif op == 'CMP':
             if self.reg[reg_a] == self.reg[reg_b]:
+                # Set 0th bit of flag to 1, 1st and 2nd bits to 0
                 self.fl = self.fl | 0b00000001
                 self.fl = self.fl & 0b11111001
             elif self.reg[reg_a] < self.reg[reg_b]:
+                # Set 2nd bit of flag to 1, 0th and 1st bits to 0
                 self.fl = self.fl | 0b00000100
                 self.fl = self.fl & 0b11111100
             else:
+                # Set 1st bit of flag to 1, 0th and 2nd bits to 0
                 self.fl = self.fl | 0b00000010
                 self.fl = self.fl & 0b11111010
         elif op == 'DEC':
@@ -146,6 +141,7 @@ class CPU:
             self.reg[reg_a] = self.reg[reg_a] ^ self.reg[reg_b]
         else:
             raise Exception("Unsupported ALU operation")
+        # Make sure the value in the original is equal to or less than 0xff
         self.reg[reg_a] = self.reg[reg_a] & 0xff
 
     def trace(self):
@@ -154,9 +150,9 @@ class CPU:
         from run() if you need help debugging.
         """
 
-        print(f"TRACE: %02X | %02X %02X %02X |" % (
+        print(f"TRACE: %02X %02X | %02X %02X %02X |" % (
             self.pc,
-            #self.fl,
+            self.fl,
             #self.ie,
             self.ram_read(self.pc),
             self.ram_read(self.pc + 1),
@@ -173,43 +169,59 @@ class CPU:
         return self.dictionary[byte]
 
     def _judge(self, mask, shift=False, shift_amount=None):
-        self.push(5)
-        self.push(6)
-        self.ldi(5, self.fl)
-        self.ldi(6, mask)
-        self.alu('AND', 5, 6)
+        """Judges which bit(s) in the flag is/are activated,
+        depending on the mask passed in."""
+        self.push(0)
+        self.push(1)
+        self.ldi(0, self.fl)
+        self.ldi(1, mask)
+        self.alu('AND', 0, 1)
         if shift:
-            self.ldi(6, shift_amount)
-            self.alu('SHR', 5, 6)
-        if self.reg[5] == 0:
-            self.pop(6)
-            self.pop(5)
+            self.push(2)
+            self.ldi(2, shift_amount)
+            self.alu('SHR', 0, 2)
+            self.pop(2)
+        if self.reg[0] == 0:
+            self.pop(1)
+            self.pop(0)
             return False
         else:
-            self.pop(6)
-            self.pop(5)
+            self.pop(1)
+            self.pop(0)
             return True
 
     def _check_elapsed_time(self):
+        """Checks to see if at least a second has passed
+        since the last time an interrupt happened."""
         for i in range(3):
             self.push(i)
+        # Save current flag into reserved space in memory,
+        # since we'll be overwriting it in this function.
         self.ram_write(self.fl, 0xf6)
         self.ldi(0, 0xf7)
         self.ldi(1, datetime.now().second)
+        # Pull previous second amount from 0xf7.
         self.ld(2, 0)
         self.alu('INC', 2, None)
         self.alu('CMP', 1, 2)
+        # If the current time is greater or equal to the previous
+        # recorded time plus 1, that means at least one second has passed.
         if self._judge(mask=0b00000011):
             self.push(3)
+            # Activate 0th bit in R6
             self.ldi(3, 0b00000001)
             self.alu('OR', 6, 3)
             self.pop(3)
+            # Store the current time in 0xf7
             self.st(0, 1)
+        # Reset the flag to its original value
         self.fl = self.ram_read(0xf6)
         for i in reversed(range(3)):
             self.pop(i)
-        
+
     def _handle_interrupts(self):
+        """Determines if a relevant interrupt occurred, and if
+        it did, performs the necessary actions."""
         maskedInterrupts = self.reg[5] & self.reg[6]
         for i in range(8):
             # Right shift interrupts by i, then mask with 1
@@ -247,6 +259,9 @@ class CPU:
                 break
 
     def _check_key_press(self):
+        """Checks to see if a key has been hit. If it has,
+        log the key's value into 0xf4, activate the 1st bit in R6,
+        then go through the interrupts process."""
         if msvcrt.kbhit():
             self.ram_write(ord(msvcrt.getch()), 0xf4)
             self.push(0)
@@ -255,19 +270,32 @@ class CPU:
             self.pop(0)
             self._handle_interrupts()
 
+    def addi(self, register, imm):
+        """Adds an immediate value to a register"""
+        if register == 0:
+            self.push(1)
+            self.ldi(1, imm)
+            self.alu('ADD', register, 1)
+            self.pop(1)
+        else:
+            self.push(0)
+            self.ldi(0, imm)
+            self.alu('ADD', register, 0)
+            self.pop(0)
+
     def call(self, register):
-        # Save current value of reg[4] to reserved place in RAM
-        self.ram_write(self.reg[4], 0xf5)
-        # Change reg[4] to address of next instruction
-        self.ldi(4, self.pc+2)
-        # Push addres of next instruction to stack
-        self.push(4)
-        # Return reg[4] to its original value
-        self.ldi(4, self.ram_read(0xf5))
+        """Call the function at the RAM address stored in the given register"""
+        # Save current value of R) to reserved place in RAM
+        self.ram_write(self.reg[0], 0xf5)
+        self.ldi(0, self.pc)
+        # Add 2 to the PC to get the address of the next instruction
+        self.addi(0, 2)
+        # Push address of next instruction to stack
+        self.push(0)
+        # Return R0 to its original value
+        self.ldi(0, self.ram_read(0xf5))
         # Set PC to address in given register
         self.pc = self.reg[register]
-        # 4. Interrupt are re-enabled (this happens automatically
-        # since R5 was popped off the stack)
 
     def int_(self, register):
         """Issue the interrupt number stored in the given register"""
@@ -280,7 +308,7 @@ class CPU:
         for i in reversed(range(7)):
             self.pop(i)
         # 2. The FL register is popped off the stack
-        # Save current value of reg[0] to reserved space in memory
+        # Save current value of R0 to reserved space in memory
         self.ram_write(self.reg[0], 0xf5)
         self.pop(0)
         self.fl = self.reg[0]
@@ -293,91 +321,115 @@ class CPU:
         # since R5 was popped)
 
     def jeq(self, register):
+        """Jumps to the RAM address in the given register if
+        the flag's "equal" (0th) bit is activated"""
         if self._judge(mask=0b00000001):
             self.jmp(register)
         else:
+            # The PC is not automatically set when this command is called,
+            # so if the 0th bit is not activated, we have to set the PC here.
             self.pc += 2
 
     def jge(self, register):
+        """Jumps to the RAM address in the given register if
+        the flag's "equal" (0th) or "greater than" (1st) bits are activated"""
         if self._judge(mask=0b00000011):
             self.jmp(register)
         else:
             self.pc += 2
 
     def jgt(self, register):
+        """Jumps to the RAM address in the given register if
+        the flag's "greater than" (1st) bit is activated"""
         if self._judge(mask=0b00000010, shift=True, shift_amount=1):
             self.jmp(register)
         else:
             self.pc += 2
 
     def jle(self, register):
+        """Jumps to the RAM address in the given register if
+        the flag's "equal" (0th) or "less than" (2nd) bits are activated"""
         if self._judge(mask=0b00000101):
             self.jmp(register)
         else:
             self.pc += 2
 
     def jlt(self, register):
+        """Jumps to the RAM address in the given register if
+        the flag's "less than" (2nd) bit is activated"""
         if self._judge(mask=0b00000100, shift=True, shift_amount=2):
             self.jmp(register)
         else:
             self.pc += 2
 
     def jmp(self, register):
+        """Sets the PC to the address in the given register"""
         self.pc = self.reg[register]
 
     def jne(self, register):
+        """Jumps to the RAM address in the given register if
+        the flag's "equal" (0th) bit is NOT activated"""
         if not self._judge(mask=0b00000001):
             self.jmp(register)
         else:
             self.pc += 2
 
     def ld(self, reg_a, reg_b):
+        """Loads the value in the RAM address stored in reg_b into reg_a"""
         mar = self.reg[reg_b]
         mdr = self.ram_read(mar)
         self.reg[reg_a] = mdr
 
     def ldi(self, register, imm):
+        """Loads an immediate value into the given register."""
         self.reg[register] = imm
 
     def nop(self):
+        """Not an operation; does nothing"""
         pass
 
     def pop(self, register):
+        """Pops the top value on the stack into the given register"""
         sp = self.reg[7]
         self.reg[register] = self.ram[sp]
         self.alu('INC', 7, None)
 
     def pra(self, register):
+        """Prints the character representation of the value in the given register.
+        NOTE: There is no automatic new line printed afterward."""
         print(chr(self.reg[register]), end='', flush=True)
+        # Need to set Flush to true so that the print values show up before a new line.
 
     def prn(self, register):
+        """Prints the number in the given register."""
         print(self.reg[register])
 
     def push(self, register):
+        """Pushes the value in the given register onto the stack."""
         self.alu('DEC', 7, None)
         sp = self.reg[7]
         self.ram[sp] = self.reg[register]
 
     def ret(self):
-        # Save current value of reg[4] to reserved place in RAM
-        self.ram_write(self.reg[4], 0xf5)
+        """Ends a function call; returns the PC to its original location."""
+        # Save current value of R0 to reserved place in RAM
+        self.ram_write(self.reg[0], 0xf5)
         # Pop value from top of stack
-        self.pop(4)
+        self.pop(0)
         # Set that value as the PC
-        self.pc = self.reg[4]
-        # Return reg[4] to its previous state
-        self.reg[4] = self.ram_read(0xf5)
+        self.pc = self.reg[0]
+        # Return R0 to its previous state
+        self.reg[0] = self.ram_read(0xf5)
 
     def st(self, reg_a, reg_b):
+        """Stores the value in reg_a into the RAM location in reg_b."""
         mar = self.reg[reg_a]
         mdr = self.reg[reg_b]
         self.ram_write(mdr, mar)
 
     def run(self):
         """Run the CPU."""
-        self.ldi(0, datetime.now().second)
-        self.ldi(1, 0xf7)
-        self.st(1, 0)
+        self.ram_write(datetime.now().second, 0xf7)
         while True:
             self._check_key_press()
             self._check_elapsed_time()
@@ -391,16 +443,42 @@ class CPU:
             # This helped to learn how to isolate values in a bit:
             # https://stackoverflow.com/a/45221136/12685847
             # Isolate first two values to get the number of operands
-            num_ops = ir >> 6 & 0b11
-            is_alu = ir >> 5 & 1 # Isolate the 3rd value
-            inst_sets_pc = ir >> 4 & 1 # Isolate the 4th value
-            next_inst_loc = self.pc + num_ops+1
+            self.push(0)
+            self.push(1)
+            self.ldi(0, ir)
+            self.ldi(1, 6)
+            self.alu('SHR', 0, 1)
+            self.ldi(1, 0b00000011)
+            self.alu('AND', 0, 1)
+            num_ops = self.reg[0]
+            # Isolate the 3rd value to see if it's an ALU op
+            self.ldi(0, ir)
+            self.ldi(1, 5)
+            self.alu('SHR', 0, 1)
+            self.ldi(1, 0b00000001)
+            self.alu('AND', 0, 1)
+            is_alu = self.reg[0] 
+            # Isolate the 4th value to see if the op sets the PC
+            self.ldi(0, ir)
+            self.ldi(1, 4)
+            self.alu('SHR', 0, 1)
+            self.ldi(1, 0b00000001)
+            self.alu('AND', 0, 1)
+            inst_sets_pc = self.reg[0]
+            # Determine the location of the next instruction
+            self.ldi(0, self.pc)
+            self.ldi(1, num_ops)
+            self.alu('INC', 1, None)
+            self.alu('ADD', 0, 1)
+            next_inst_loc = self.reg[0]
+            self.pop(1)
+            self.pop(0)
+
             if inst == 'HLT':
                 self.pc = next_inst_loc
                 break
             elif is_alu:
                 self.alu(inst, operand_a, operand_b)
-                self.pc = next_inst_loc
             else:
                 func = getattr(self, inst.lower())
                 if num_ops == 0:
